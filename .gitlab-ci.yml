@@ -1,0 +1,38 @@
+stages:
+  - build
+  - deploy
+
+
+.gitlab_push_image_base: &gitlab_push_image_def
+  image: docker:latest
+  stage: build
+  services:
+    - docker:dind
+
+  before_script:
+    # log into gitlab's docker registry
+    - echo "$CI_JOB_TOKEN" | docker login --username gitlab-ci-token --password-stdin $CI_REGISTRY
+
+  script:
+    - docker pull $REGISTRY_IMAGE:latest || true
+    # build new docker image (use previous one as cache)
+    - docker build --pull
+        --cache-from $REGISTRY_IMAGE:latest
+        -f $CONTEXT_PATH/$DOCKERFILE_NAME
+        -t $REGISTRY_IMAGE
+        $CONTEXT_PATH
+    # push new docker image to AWS ECR
+    - docker push $REGISTRY_IMAGE
+    # remove local docker image
+    - docker image rm $REGISTRY_IMAGE
+
+build_image:
+  <<: *gitlab_push_image_def
+  variables:
+    REGISTRY_IMAGE: $CI_REGISTRY_IMAGE/$CI_PROJECT_NAME
+    DOCKERFILE_NAME: Dockerfile 
+    CONTEXT_PATH: .
+
+  only:
+    - master
+
