@@ -23,7 +23,7 @@ stages:
   before_script:
     # log into gitlab's docker registry
     - echo "$CI_JOB_TOKEN" | docker login --username gitlab-ci-token --password-stdin $CI_REGISTRY
-    - apk add --no-cache python3
+    - apk add --no-cache python3 py3-pip
     - pip3 install --no-cache-dir awscli
     # log into ECR
     - CERT=`aws ecr get-login --no-include-email --region ${AWS_REGION}`
