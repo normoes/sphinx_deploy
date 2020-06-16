@@ -1,38 +1,88 @@
+include:
+  - project: 'general/common-gitlab-stages'
+    ref: v0.0.13
+    file: '/.gitlab-ci-deploy_image.yml'
+  - project: 'general/common-gitlab-stages'
+    ref: v0.0.13
+    file: '/.gitlab-ci-deploy_service.yml'
+  - project: 'general/common-gitlab-stages'
+    ref: v0.0.13
+    file: '/environment/.gitlab-ci-css-core-env.yml'
+
 stages:
   - build
   - deploy
 
 
 .gitlab_push_image_base: &gitlab_push_image_def
-  image: docker:latest
+  extends: .docker_image
   stage: build
   services:
-    - docker:dind
+    - $DOCKER_IMAGE_NAME
 
   before_script:
     # log into gitlab's docker registry
     - echo "$CI_JOB_TOKEN" | docker login --username gitlab-ci-token --password-stdin $CI_REGISTRY
+    - apk add --no-cache python3
+    - pip3 install --no-cache-dir awscli
+    # log into ECR
+    - CERT=`aws ecr get-login --no-include-email --region ${AWS_REGION}`
+    - ${CERT}
 
   script:
-    - docker pull $REGISTRY_IMAGE:latest || true
+    - docker pull $REGISTRY_IMAGE:$REPO_TAG || true
     # build new docker image (use previous one as cache)
+        # --cache-from $REGISTRY_IMAGE:latest
     - docker build --pull
-        --cache-from $REGISTRY_IMAGE:latest
         -f $CONTEXT_PATH/$DOCKERFILE_NAME
-        -t $REGISTRY_IMAGE
+        -t $REGISTRY_IMAGE:$REPO_TAG
         $CONTEXT_PATH
-    # push new docker image to AWS ECR
-    - docker push $REGISTRY_IMAGE
+    # push new docker image to AWS ECR and gitlab registry
+    - docker push $REGISTRY_IMAGE:$REPO_TAG
+    - docker tag $REGISTRY_IMAGE:$REPO_TAG $REGISTRY_IMAGE_GITLAB:$REPO_TAG
+    - docker push $REGISTRY_IMAGE_GITLAB:$REPO_TAG
     # remove local docker image
-    - docker image rm $REGISTRY_IMAGE
+    - docker image rm $REGISTRY_IMAGE:$REPO_TAG
+    - docker image rm $REGISTRY_IMAGE_GITLAB:$REPO_TAG
 
-build_image:
+build_image_tags:
   <<: *gitlab_push_image_def
   variables:
-    REGISTRY_IMAGE: $CI_REGISTRY_IMAGE/$CI_PROJECT_NAME
+    REGISTRY_IMAGE_GITLAB: $CI_REGISTRY_IMAGE/$CI_PROJECT_NAME
+    REGISTRY_IMAGE: $ECR_REPO_STAGING/$CI_PROJECT_NAME
     DOCKERFILE_NAME: Dockerfile 
     CONTEXT_PATH: .
+    REPO_TAG: $CI_COMMIT_REF_NAME
+    AWS_REGION: $AWS_REGION_STAGING
+
+  only:
+    - tags
+
+build_image_staging:
+  <<: *gitlab_push_image_def
+  variables:
+    REGISTRY_IMAGE_GITLAB: $CI_REGISTRY_IMAGE/$CI_PROJECT_NAME
+    REGISTRY_IMAGE: $ECR_REPO_STAGING/$CI_PROJECT_NAME
+    DOCKERFILE_NAME: Dockerfile 
+    CONTEXT_PATH: .
+    REPO_TAG: $CI_COMMIT_REF_NAME
+    AWS_REGION: $AWS_REGION_STAGING
+
+  only:
+    - staging
+
+build_image_prod:
+  <<: *gitlab_push_image_def
+  variables:
+    REGISTRY_IMAGE_GITLAB: $CI_REGISTRY_IMAGE/$CI_PROJECT_NAME
+    REGISTRY_IMAGE: $ECR_REPO_PROD/$CI_PROJECT_NAME
+    DOCKERFILE_NAME: Dockerfile 
+    CONTEXT_PATH: .
+    REPO_TAG: $CI_COMMIT_REF_NAME
+    AWS_REGION: $AWS_REGION_PROD
 
   only:
     - master
+  tags:
+    - critical
 
